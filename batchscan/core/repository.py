@@ -1,6 +1,7 @@
 import datetime
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 
 
@@ -8,7 +9,7 @@ class RepositoryBase:
     def __init__(self, db_file="photos.db"):
         """Initialize the repository with a database file."""
         self.db_file = db_file
-        self.connection = None
+        self._local = threading.local()
         self.initialize_database()
     
     def initialize_database(self):
@@ -19,17 +20,17 @@ class RepositoryBase:
             self.close()
     
     def connect(self):
-        """Connect to the SQLite database."""
-        if self.connection is None:
-            self.connection = sqlite3.connect(self.db_file)
-            self.connection.row_factory = sqlite3.Row
-        return self.connection
+        """Connect to the SQLite database in a thread-safe way."""
+        if not hasattr(self._local, 'connection') or self._local.connection is None:
+            self._local.connection = sqlite3.connect(self.db_file)
+            self._local.connection.row_factory = sqlite3.Row
+        return self._local.connection
     
     def close(self):
-        """Close the database connection."""
-        if self.connection:
-            self.connection.close()
-            self.connection = None
+        """Close the database connection for the current thread."""
+        if hasattr(self._local, 'connection') and self._local.connection is not None:
+            self._local.connection.close()
+            self._local.connection = None
     
     def create_tables(self):
         """Create all necessary tables in the database."""
@@ -40,15 +41,22 @@ class RepositoryBase:
     def transaction(self):
         """Provide a context manager for database transactions."""
         connection = self.connect()
+        cursor = None
         try:
             cursor = connection.cursor()
             yield cursor
             connection.commit()
         except Exception as e:
-            connection.rollback()
+            if connection:
+                try:
+                    connection.rollback()
+                except Exception as rollback_error:
+                    # Rollback failed, log error but continue with original error
+                    print(f"Rollback failed: {rollback_error}")
             raise e
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
     
     def get_current_datetime(self):
         """Get the current date and time in a format suitable for the database."""
