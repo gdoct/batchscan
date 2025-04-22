@@ -1,6 +1,6 @@
-# pip install accelerate
-
 import base64
+import datetime
+import hashlib
 import os
 import time
 from io import BytesIO
@@ -18,8 +18,8 @@ class PhotoScanner:
     """
     
     questions_to_ask = {
-        "q1": "give exactly one sentence which describes the scene in the image in a neutral way",
-        "q2": "give a comma separated list of keywords that describe the image",
+        "q1": "give exactly one sentence which describes the scene in the image in a neutral way. don't start the reply with 'this photo describes', just give the description in one line.",
+        "q2": "give a comma separated list of keywords that describe the image. reply with only the comma-separated list in one single line.",
        # "q3": "what is the mood of the image",
        # "q4": "give a single possible title for this image",
     }
@@ -102,12 +102,13 @@ class PhotoScanner:
         """
         Process a single image and return answers to all questions in questions_to_ask.
         Each question is processed with its own fresh context to optimize processing time.
+        Also extract additional image metadata like filesize, md5, dimensions, etc.
 
         Args:
             imagesource: Path, URL, or base64 string of the image to process
 
         Returns:
-            dict: Dictionary containing answers to each question in questions_to_ask
+            dict: Dictionary containing answers to each question and image metadata
         """
         if self.model is None or self.processor is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
@@ -116,6 +117,14 @@ class PhotoScanner:
         print(f"Processing image: {imagesource}")
         image = self.load_image(imagesource)
         results = {}
+        
+        # Extract image metadata
+        if os.path.isfile(imagesource):
+            print("Extracting image metadata...")
+            metadata = self.get_image_metadata(imagesource, image)
+            # Add metadata to results
+            results.update(metadata)
+            print(f"Metadata extracted: {len(metadata)} properties")
         
         # Process each question in the questions_to_ask dictionary with a fresh context
         for key, question in self.questions_to_ask.items():
@@ -184,3 +193,73 @@ class PhotoScanner:
             print(f"Using GPU: {device}")
         else:
             print("No GPU found, using CPU.")
+    
+    def _calculate_md5(self, file_path):
+        """
+        Calculate MD5 hash for a file.
+        
+        Args:
+            file_path (str): Path to the file
+            
+        Returns:
+            str: MD5 hash of the file
+        """
+        md5_hash = hashlib.md5()
+        with open(file_path, "rb") as f:
+            # Read file in chunks to handle large files efficiently
+            for chunk in iter(lambda: f.read(4096), b""):
+                md5_hash.update(chunk)
+        return md5_hash.hexdigest()
+    
+    def get_image_metadata(self, file_path, image=None):
+        """
+        Get additional metadata for an image.
+        
+        Args:
+            file_path (str): Path to the image file
+            image (PIL.Image, optional): Already loaded image object
+            
+        Returns:
+            dict: Dictionary containing metadata (filesize, md5, width, height, month, year)
+        """
+        metadata = {}
+        
+        # Get file size
+        if os.path.isfile(file_path):
+            metadata['filesize'] = os.path.getsize(file_path)
+            # Calculate MD5 hash
+            metadata['md5'] = self._calculate_md5(file_path)
+        
+        # Get image dimensions
+        if image is None and os.path.isfile(file_path):
+            image = Image.open(file_path)
+        
+        if image:
+            metadata['width'] = image.width
+            metadata['height'] = image.height
+            
+            # Extract date information if available in image EXIF data
+            try:
+                exif_data = image._getexif()
+                if exif_data:
+                    # EXIF tag 36867 is DateTimeOriginal
+                    date_str = exif_data.get(36867)
+                    if date_str:
+                        # Format is typically "YYYY:MM:DD HH:MM:SS"
+                        dt = datetime.datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+                        metadata['month'] = dt.month
+                        metadata['year'] = dt.year
+            except (AttributeError, ValueError, KeyError):
+                # If EXIF data is not available or has unexpected format,
+                # use file modification time
+                pass
+        
+        # If date wasn't found in EXIF, use file modification time
+        if 'month' not in metadata or 'year' not in metadata:
+            if os.path.isfile(file_path):
+                mtime = os.path.getmtime(file_path)
+                dt = datetime.datetime.fromtimestamp(mtime)
+                metadata['month'] = dt.month
+                metadata['year'] = dt.year
+                
+        return metadata

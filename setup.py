@@ -25,6 +25,9 @@ setup(
         "requests",
         "torch",
         "transformers",
+        "flask",
+        "flask-socketio",
+        "python-dotenv",
     ],
     entry_points={
         "console_scripts": [

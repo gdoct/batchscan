@@ -5,6 +5,7 @@ This module contains the core components for scanning and processing images.
 """
 
 from .batch_scanner import BatchScanner
+from .db_init import initialize_database_tables
 from .photo_scanner import PhotoScanner
 from .repository import (FolderRepository, MetaDataRepository, PhotoRepository,
                          RepositoryBase, TagRepository)
@@ -16,5 +17,6 @@ __all__ = [
     'MetaDataRepository',
     'TagRepository',
     'FolderRepository',
-    'BatchScanner'
+    'BatchScanner',
+    'initialize_database_tables'
 ]

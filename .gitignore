@@ -42,4 +42,5 @@ venv.bak/
 
 # Local development settings
 .env
+.data/
 photos.db

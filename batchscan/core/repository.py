@@ -1,8 +1,11 @@
 import datetime
+import io
 import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+
+from PIL import Image
 
 
 class RepositoryBase:
@@ -10,14 +13,6 @@ class RepositoryBase:
         """Initialize the repository with a database file."""
         self.db_file = db_file
         self._local = threading.local()
-        self.initialize_database()
-    
-    def initialize_database(self):
-        """Create the database file and tables if they don't exist."""
-        if not os.path.exists(self.db_file):
-            self.connect()
-            self.create_tables()
-            self.close()
     
     def connect(self):
         """Connect to the SQLite database in a thread-safe way."""
@@ -31,11 +26,6 @@ class RepositoryBase:
         if hasattr(self._local, 'connection') and self._local.connection is not None:
             self._local.connection.close()
             self._local.connection = None
-    
-    def create_tables(self):
-        """Create all necessary tables in the database."""
-        # This method will be overridden by subclasses
-        pass
     
     @contextmanager
     def transaction(self):
@@ -64,35 +54,22 @@ class RepositoryBase:
         return now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")
 
 class PhotoRepository(RepositoryBase):
-    def create_tables(self):
-        """Create the photos table if it doesn't exist."""
-        with self.transaction() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS photos (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    folderid INTEGER,
-                    fullpath TEXT,
-                    filename TEXT,
-                    date TEXT,
-                    time TEXT,
-                    is_completed INTEGER DEFAULT 0,
-                    FOREIGN KEY (folderid) REFERENCES folders (id)
-                )
-            ''')
-    
-    def add_photo(self, folderid, fullpath, filename, is_completed=0):
+    def add_photo(self, folderid, fullpath, filename, is_completed=0, filesize=None, md5=None, width=None, height=None, month=None, year=None):
         """Add a new photo to the database."""
         date, time = self.get_current_datetime()
         with self.transaction() as cursor:
             cursor.execute('''
-                INSERT INTO photos (folderid, fullpath, filename, date, time, is_completed)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (folderid, fullpath, filename, date, time, is_completed))
+                INSERT INTO photos (folderid, fullpath, filename, date, time, is_completed, 
+                                   filesize, md5, width, height, month, year)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (folderid, fullpath, filename, date, time, is_completed, 
+                 filesize, md5, width, height, month, year))
             return cursor.lastrowid
     
     def update_photo(self, photo_id, **kwargs):
         """Update a photo in the database."""
-        allowed_fields = ['folderid', 'fullpath', 'filename', 'is_completed']
+        allowed_fields = ['folderid', 'fullpath', 'filename', 'is_completed', 
+                          'filesize', 'md5', 'width', 'height', 'month', 'year']
         updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
         
         if not updates:
@@ -132,23 +109,26 @@ class PhotoRepository(RepositoryBase):
         with self.transaction() as cursor:
             cursor.execute("SELECT * FROM photos WHERE is_completed = 0")
             return cursor.fetchall()
+    
+    def get_photo_by_filesize_and_md5(self, filesize, md5):
+        """Find a photo with matching filesize and MD5 hash.
+        
+        Args:
+            filesize (int): Size of the file in bytes
+            md5 (str): MD5 hash of the file
+            
+        Returns:
+            dict: Photo record if found, None otherwise
+        """
+        with self.transaction() as cursor:
+            cursor.execute("""
+                SELECT * FROM photos 
+                WHERE filesize = ? AND md5 = ? AND is_completed = 1
+                LIMIT 1
+            """, (filesize, md5))
+            return cursor.fetchone()
 
 class MetaDataRepository(RepositoryBase):
-    def create_tables(self):
-        """Create the metadata table if it doesn't exist."""
-        with self.transaction() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS metadata (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    photo_id INTEGER,
-                    key TEXT,
-                    value TEXT,
-                    date TEXT,
-                    time TEXT,
-                    FOREIGN KEY (photo_id) REFERENCES photos (id)
-                )
-            ''')
-    
     def add_metadata(self, photo_id, key, value):
         """Add metadata for a photo."""
         date, time = self.get_current_datetime()
@@ -205,20 +185,6 @@ class MetaDataRepository(RepositoryBase):
             return cursor.fetchone()
 
 class TagRepository(RepositoryBase):
-    def create_tables(self):
-        """Create the tags table if it doesn't exist."""
-        with self.transaction() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS tags (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    photo_id INTEGER,
-                    tag TEXT,
-                    date TEXT,
-                    time TEXT,
-                    FOREIGN KEY (photo_id) REFERENCES photos (id)
-                )
-            ''')
-    
     def add_tag(self, photo_id, tag):
         """Add a tag to a photo."""
         date, time = self.get_current_datetime()
@@ -256,18 +222,6 @@ class TagRepository(RepositoryBase):
             return cursor.fetchall()
 
 class FolderRepository(RepositoryBase):
-    def create_tables(self):
-        """Create the folders table if it doesn't exist."""
-        with self.transaction() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS folders (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    path TEXT UNIQUE,
-                    date TEXT,
-                    time TEXT
-                )
-            ''')
-    
     def add_folder(self, path):
         """Add a new folder to the database."""
         date, time = self.get_current_datetime()
@@ -317,3 +271,65 @@ class FolderRepository(RepositoryBase):
         with self.transaction() as cursor:
             cursor.execute("SELECT * FROM folders")
             return cursor.fetchall()
+
+class PhotoPreviewRepository(RepositoryBase):
+    def add_thumbnail(self, photo_id, image_path):
+        """Add a thumbnail for a photo."""
+        date, time = self.get_current_datetime()
+        thumbnail = self.create_thumbnail(image_path)
+        with self.transaction() as cursor:
+            cursor.execute('''
+                INSERT INTO photo_preview (photo_id, thumbnail, date, time)
+                VALUES (?, ?, ?, ?)
+            ''', (photo_id, thumbnail, date, time))
+            return cursor.lastrowid
+    
+    def create_thumbnail(self, image_path, size=(128, 128)):
+        """Create a thumbnail for an image, preserving orientation."""
+        try:
+            with Image.open(image_path) as img:
+                # Apply orientation based on EXIF data
+                if hasattr(img, '_getexif') and img._getexif() is not None:
+                    exif = dict(img._getexif().items())
+                    # EXIF orientation tag is 0x0112 (274)
+                    if 274 in exif:
+                        orientation = exif[274]
+                        # Handle orientation values
+                        if orientation == 2:
+                            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                        elif orientation == 3:
+                            img = img.transpose(Image.ROTATE_180)
+                        elif orientation == 4:
+                            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                        elif orientation == 5:
+                            img = img.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.ROTATE_90)
+                        elif orientation == 6:
+                            img = img.transpose(Image.ROTATE_270)
+                        elif orientation == 7:
+                            img = img.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.ROTATE_270)
+                        elif orientation == 8:
+                            img = img.transpose(Image.ROTATE_90)
+                
+                # Create thumbnail while maintaining aspect ratio
+                img.thumbnail(size, Image.LANCZOS)
+                
+                with io.BytesIO() as output:
+                    # Save with highest quality to maintain clarity
+                    img.save(output, format="JPEG", quality=95)
+                    return output.getvalue()
+        except Exception as e:
+            print(f"Error creating thumbnail: {str(e)}")
+            # Return a placeholder thumbnail or None
+            return None
+    
+    def get_thumbnail(self, photo_id):
+        """Get the thumbnail for a photo."""
+        with self.transaction() as cursor:
+            cursor.execute("SELECT thumbnail FROM photo_preview WHERE photo_id = ?", (photo_id,))
+            result = cursor.fetchone()
+            return result['thumbnail'] if result else None
+    
+    def delete_thumbnail(self, photo_id):
+        """Delete the thumbnail for a photo."""
+        with self.transaction() as cursor:
+            cursor.execute("DELETE FROM photo_preview WHERE photo_id = ?", (photo_id,))
