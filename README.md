@@ -8,7 +8,8 @@ A tool for batch processing and analyzing images using the Gemma-3 AI model.
 - Store image metadata and tags in a SQLite database
 - Skip already processed images for efficiency
 - Recursive directory scanning support
-- Command-line interface for easy use
+- Web interface for running scans and viewing images
+- Command-line interface for other use
 
 ## Requirements
 
@@ -38,8 +39,13 @@ pip install git+https://github.com/gdoct/batchscan.git
 
 ## Usage
 
-### Basic Usage
+### Web interface
+```bash
+# Run the python web interface on http://localhost:5000
+./run.sh
+```
 
+### Command-line
 ```bash
 # Process all images in the current directory
 batchscan
