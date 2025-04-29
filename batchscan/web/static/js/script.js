@@ -27,13 +27,40 @@ document.addEventListener('DOMContentLoaded', function() {
     const scanTotalElement = document.getElementById('scan-total');
     const scanElapsedTimeElement = document.getElementById('scan-elapsed-time');
     const scanRemainingTimeElement = document.getElementById('scan-remaining-time');
+    // Batch operation elements
+    const batchActionsContainer = document.querySelector('.batch-actions');
+    const batchDeleteDbBtn = document.getElementById('batch-delete-db');
+    const batchDeleteAllBtn = document.getElementById('batch-delete-all');
+    
+    // Search elements
+    const searchDescription = document.getElementById('search-description');
+    const searchTags = document.getElementById('search-tags');
+    const searchDateFrom = document.getElementById('search-date-from');
+    const searchDateTo = document.getElementById('search-date-to');
+    const searchApplyBtn = document.getElementById('search-apply');
+    const searchResetBtn = document.getElementById('search-reset');
+    const searchCollapse = document.getElementById('searchCollapse');
+    const searchToggleBtn = document.querySelector('[data-bs-toggle="collapse"][data-bs-target="#searchCollapse"]');
+    const searchToggleBtnIcon = searchToggleBtn.querySelector('i');
     
     // State tracking
     let currentFolderId = null;
     let currentFolderPath = null;
     let currentPhotoId = null;
     let currentPhotos = [];
+    let filteredPhotos = [];
     let modalInstance = null;
+    let selectedPhotos = new Set(); // Track selected photos by ID
+    let availableTags = new Set(); // Track all available tags
+    
+    // Pagination state
+    let serverPage = 1;               // Current server-side page (100 photos per page)
+    let clientPage = 1;               // Current client-side page (25 photos per page)
+    let totalServerPages = 1;         // Total number of server pages
+    let totalClientPages = 1;         // Total number of client pages for current server page
+    let clientPageSize = 25;          // Number of photos per client page
+    let serverPageSize = 100;         // Number of photos per server page
+    let totalPhotos = 0;              // Total number of photos in the folder
 
     // Initialize Bootstrap modal
     if (photoModal) {
@@ -122,6 +149,57 @@ document.addEventListener('DOMContentLoaded', function() {
         stopScanning();
     });
 
+    // Add batch operation button event handlers
+    batchDeleteDbBtn.addEventListener('click', function() {
+        if (selectedPhotos.size === 0) {
+            alert('No photos selected');
+            return;
+        }
+        
+        if (confirm(`Are you sure you want to delete ${selectedPhotos.size} photo(s) from the database?`)) {
+            deleteSelectedPhotos(false);
+        }
+    });
+    
+    batchDeleteAllBtn.addEventListener('click', function() {
+        if (selectedPhotos.size === 0) {
+            alert('No photos selected');
+            return;
+        }
+        
+        if (confirm(`WARNING: This will permanently delete ${selectedPhotos.size} photo(s) from both the database AND disk. This cannot be undone. Continue?`)) {
+            deleteSelectedPhotos(true);
+        }
+    });
+
+    // Search event handlers
+    searchApplyBtn.addEventListener('click', function() {
+        applyFilters();
+    });
+    
+    searchResetBtn.addEventListener('click', function() {
+        resetFilters();
+    });
+    
+    // Add input event for real-time filtering with description
+    searchDescription.addEventListener('input', function() {
+        // Only apply filter if the description is either empty or at least 3 characters
+        if (this.value === '' || this.value.length >= 3) {
+            applyFilters();
+        }
+    });
+
+    // Update toggle button arrow when search area is expanded or collapsed
+    searchCollapse.addEventListener('shown.bs.collapse', function() {
+        searchToggleBtnIcon.classList.remove('bi-chevron-down');
+        searchToggleBtnIcon.classList.add('bi-chevron-up');
+    });
+
+    searchCollapse.addEventListener('hidden.bs.collapse', function() {
+        searchToggleBtnIcon.classList.remove('bi-chevron-up');
+        searchToggleBtnIcon.classList.add('bi-chevron-down');
+    });
+    
     // Helper functions
     function showPhotosView() {
         photosView.style.display = 'block';
@@ -179,6 +257,13 @@ document.addEventListener('DOMContentLoaded', function() {
                         currentFolderId = folder.id;
                         currentFolderPath = folder.path;
                         
+                        // Reset selected photos when changing folders
+                        selectedPhotos.clear();
+                        updateBatchActionsVisibility();
+                        
+                        // Reset filters when changing folders
+                        resetFilters();
+                        
                         // Load photos for this folder
                         loadPhotosInFolder(folder.id, folder.path);
                     });
@@ -192,7 +277,16 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
-    function loadPhotosInFolder(folderId, folderPath) {
+    function loadPhotosInFolder(folderId, folderPath, page = 1) {
+        // Reset pagination state when loading a new folder
+        if (currentFolderId !== folderId) {
+            serverPage = 1;
+            clientPage = 1;
+        } else {
+            // Otherwise use the provided page
+            serverPage = page;
+        }
+        
         // Show loading state
         photoGrid.innerHTML = `
             <div class="col-12 text-center">
@@ -203,100 +297,37 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         `;
         
-        fetch(`/api/folder/${folderId}/photos`)
+        fetch(`/api/folder/${folderId}/photos?page=${serverPage}`)
             .then(response => response.json())
-            .then(photos => {
-                // Update state
-                currentPhotos = photos;
+            .then(data => {
+                // Update state with server data
+                currentPhotos = data.photos;
+                filteredPhotos = data.photos; // Initially all photos are shown
                 
-                // Clear previous content
-                photoGrid.innerHTML = '';
+                // Update pagination state
+                totalPhotos = data.pagination.total_photos;
+                totalServerPages = data.pagination.total_pages;
+                totalClientPages = Math.ceil(currentPhotos.length / clientPageSize);
                 
-                if (photos.length === 0) {
-                    photoGrid.innerHTML = `
-                        <div class="col-12 text-center text-muted">
-                            No photos found in this folder
-                        </div>
-                    `;
-                    return;
-                }
+                // Reset client page when loading a new server page
+                clientPage = 1;
                 
-                // Add each photo as a card
-                photos.forEach(photo => {
-                    const col = document.createElement('div');
-                    col.className = 'col-md-4 col-lg-3 mb-4';
-                    
-                    const card = document.createElement('div');
-                    card.className = 'card h-100 photo-card';
-                    
-                    // Add thumbnail or placeholder
-                    if (photo.thumbnail) {
-                        const img = document.createElement('img');
-                        img.className = 'card-img-top photo-thumbnail';
-                        img.src = `data:image/jpeg;base64,${photo.thumbnail}`;
-                        img.alt = photo.filename;
-                        card.appendChild(img);
-                    } else {
-                        const placeholder = document.createElement('div');
-                        placeholder.className = 'card-img-top bg-light d-flex align-items-center justify-content-center';
-                        placeholder.style.height = '150px';
-                        placeholder.innerHTML = '<span class="text-muted">No preview</span>';
-                        card.appendChild(placeholder);
+                // Reset and collect available tags for this folder
+                availableTags.clear();
+                currentPhotos.forEach(photo => {
+                    if (photo.tags && Array.isArray(photo.tags)) {
+                        photo.tags.forEach(tag => availableTags.add(tag));
                     }
-                    
-                    // Card body with title and description
-                    const cardBody = document.createElement('div');
-                    cardBody.className = 'card-body';
-                    
-                    const title = document.createElement('h6');
-                    title.className = 'card-title';
-                    title.textContent = photo.filename;
-                    
-                    const description = document.createElement('p');
-                    description.className = 'card-text small';
-                    
-                    if (photo.metadata && photo.metadata.q1) {
-                        description.textContent = photo.metadata.q1;
-                    } else {
-                        description.textContent = 'No description available';
-                    }
-                    
-                    cardBody.appendChild(title);
-                    cardBody.appendChild(description);
-                    
-                    // Add tags if available
-                    if (photo.tags && photo.tags.length > 0) {
-                        const tagsDiv = document.createElement('div');
-                        tagsDiv.className = 'mt-2';
-                        
-                        // Show first 2 tags only
-                        photo.tags.slice(0, 2).forEach(tag => {
-                            const badge = document.createElement('span');
-                            badge.className = 'badge bg-primary me-1 tag-badge';
-                            badge.textContent = tag;
-                            tagsDiv.appendChild(badge);
-                        });
-                        
-                        if (photo.tags.length > 2) {
-                            const moreBadge = document.createElement('span');
-                            moreBadge.className = 'badge bg-secondary tag-badge';
-                            moreBadge.textContent = `+${photo.tags.length - 2} more`;
-                            tagsDiv.appendChild(moreBadge);
-                        }
-                        
-                        cardBody.appendChild(tagsDiv);
-                    }
-                    
-                    card.appendChild(cardBody);
-                    
-                    // Make the entire card clickable to open the modal
-                    card.addEventListener('click', () => {
-                        showPhotoDetails(photo.id);
-                    });
-                    
-                    col.appendChild(card);
-                    photoGrid.appendChild(col);
                 });
+                
+                // Update tag filter options
+                updateTagOptions();
+                
+                // Render photos with pagination
+                renderPhotosPage(clientPage);
+                
+                // Update pagination UI
+                renderPagination();
             })
             .catch(error => {
                 console.error('Error loading photos:', error);
@@ -306,6 +337,154 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                 `;
             });
+    }
+    
+    function updateTagOptions() {
+        // Clear existing options
+        searchTags.innerHTML = '';
+        
+        // Sort tags alphabetically
+        const sortedTags = Array.from(availableTags).sort();
+        
+        // Add options for each tag
+        sortedTags.forEach(tag => {
+            const option = document.createElement('option');
+            option.value = tag;
+            option.textContent = tag;
+            searchTags.appendChild(option);
+        });
+    }
+    
+    function renderPhotos(photos) {
+        // Clear previous content
+        photoGrid.innerHTML = '';
+                
+        if (photos.length === 0) {
+            photoGrid.innerHTML = `
+                <div class="col-12 text-center text-muted">
+                    No photos found matching your criteria
+                </div>
+            `;
+            return;
+        }
+        
+        // Add each photo as a card
+        photos.forEach(photo => {
+            const col = document.createElement('div');
+            col.className = 'col-md-4 col-lg-3 mb-4';
+            
+            const card = document.createElement('div');
+            card.className = 'card h-100 photo-card position-relative';
+            card.dataset.photoId = photo.id;
+            
+            // Check if this photo is already selected
+            if (selectedPhotos.has(photo.id)) {
+                card.classList.add('selected');
+            }
+            
+            // Add checkbox for selection
+            const checkboxContainer = document.createElement('div');
+            checkboxContainer.className = 'photo-checkbox-container';
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'photo-checkbox';
+            checkbox.checked = selectedPhotos.has(photo.id);
+            
+            checkbox.addEventListener('change', function(e) {
+                // Stop the event from triggering the card click
+                e.stopPropagation();
+                
+                if (this.checked) {
+                    selectedPhotos.add(photo.id);
+                    card.classList.add('selected');
+                } else {
+                    selectedPhotos.delete(photo.id);
+                    card.classList.remove('selected');
+                }
+                
+                updateBatchActionsVisibility();
+            });
+            
+            // Stop click on checkbox from opening the modal
+            checkbox.addEventListener('click', function(e) {
+                e.stopPropagation();
+            });
+            
+            checkboxContainer.appendChild(checkbox);
+            card.appendChild(checkboxContainer);
+            
+            // Add thumbnail or placeholder
+            if (photo.thumbnail) {
+                const img = document.createElement('img');
+                img.className = 'card-img-top photo-thumbnail';
+                img.src = `data:image/jpeg;base64,${photo.thumbnail}`;
+                img.alt = photo.filename;
+                card.appendChild(img);
+            } else {
+                const placeholder = document.createElement('div');
+                placeholder.className = 'card-img-top bg-light d-flex align-items-center justify-content-center';
+                placeholder.style.height = '150px';
+                placeholder.innerHTML = '<span class="text-muted">No preview</span>';
+                card.appendChild(placeholder);
+            }
+            
+            // Card body with title and description
+            const cardBody = document.createElement('div');
+            cardBody.className = 'card-body';
+            
+            const title = document.createElement('h6');
+            title.className = 'card-title';
+            title.textContent = photo.filename;
+            
+            const description = document.createElement('p');
+            description.className = 'card-text small';
+            
+            if (photo.metadata && photo.metadata.q1) {
+                description.textContent = photo.metadata.q1;
+            } else {
+                description.textContent = 'No description available';
+            }
+            
+            cardBody.appendChild(title);
+            cardBody.appendChild(description);
+            
+            // Add tags if available
+            if (photo.tags && photo.tags.length > 0) {
+                const tagsDiv = document.createElement('div');
+                tagsDiv.className = 'mt-2';
+                
+                // Show first 2 tags only
+                photo.tags.slice(0, 2).forEach(tag => {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge bg-primary me-1 tag-badge';
+                    badge.textContent = tag;
+                    tagsDiv.appendChild(badge);
+                });
+                
+                if (photo.tags.length > 2) {
+                    const moreBadge = document.createElement('span');
+                    moreBadge.className = 'badge bg-secondary tag-badge';
+                    moreBadge.textContent = `+${photo.tags.length - 2} more`;
+                    tagsDiv.appendChild(moreBadge);
+                }
+                
+                cardBody.appendChild(tagsDiv);
+            }
+            
+            card.appendChild(cardBody);
+            
+            // Make the entire card clickable to open the modal
+            card.addEventListener('click', () => {
+                showPhotoDetails(photo.id);
+            });
+            
+            col.appendChild(card);
+            photoGrid.appendChild(col);
+        });
+        
+        // If we had selected photos before, check if they're still visible
+        updateBatchActionsVisibility();
     }
 
     function showPhotoDetails(photoId) {
@@ -520,12 +699,332 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function navigatePhotos(direction) {
-        const currentIndex = currentPhotos.findIndex(photo => photo.id === currentPhotoId);
+        const currentIndex = filteredPhotos.findIndex(photo => photo.id === currentPhotoId);
         if (currentIndex === -1) return;
 
         const newIndex = currentIndex + direction;
-        if (newIndex >= 0 && newIndex < currentPhotos.length) {
-            showPhotoDetails(currentPhotos[newIndex].id);
+        if (newIndex >= 0 && newIndex < filteredPhotos.length) {
+            showPhotoDetails(filteredPhotos[newIndex].id);
         }
+    }
+    
+    // New functions for batch operations
+    function updateBatchActionsVisibility() {
+        if (selectedPhotos.size > 0) {
+            batchActionsContainer.style.display = 'block';
+        } else {
+            batchActionsContainer.style.display = 'none';
+        }
+    }
+    
+    function deleteSelectedPhotos(deleteFromDisk) {
+        // Convert Set to Array for the API call
+        const photoIds = Array.from(selectedPhotos);
+        
+        // Call the appropriate API endpoint based on deleteFromDisk flag
+        fetch('/api/photos/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ 
+                photo_ids: photoIds,
+                delete_from_disk: deleteFromDisk
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert(`Error: ${data.error}`);
+                return;
+            }
+            
+            // Show success message
+            const operation = deleteFromDisk ? 'deleted from database and disk' : 'deleted from database';
+            alert(`${data.deleted} photos successfully ${operation}.`);
+            
+            // Reset selected photos
+            selectedPhotos.clear();
+            updateBatchActionsVisibility();
+            
+            // Reload photos to reflect the changes
+            if (currentFolderId) {
+                loadPhotosInFolder(currentFolderId, currentFolderPath);
+            }
+        })
+        .catch(error => {
+            console.error('Error deleting photos:', error);
+            alert('Failed to delete photos. See console for details.');
+        });
+    }
+    
+    // New functions for search and filtering
+    function resetFilters() {
+        // Clear all search inputs
+        searchDescription.value = '';
+        searchDateFrom.value = '';
+        searchDateTo.value = '';
+        
+        // Unselect all tags
+        Array.from(searchTags.options).forEach(option => {
+            option.selected = false;
+        });
+        
+        // Reset to show all photos
+        filteredPhotos = [...currentPhotos];
+        
+        // Reset to first page
+        clientPage = 1;
+        
+        // Render photos with pagination
+        renderPhotosPage(clientPage);
+        renderPagination();
+    }
+    
+    function applyFilters() {
+        // Get filter criteria
+        const descriptionFilter = searchDescription.value.toLowerCase().trim();
+        const selectedTags = Array.from(searchTags.selectedOptions).map(option => option.value);
+        const dateFrom = searchDateFrom.value ? new Date(searchDateFrom.value) : null;
+        const dateTo = searchDateTo.value ? new Date(searchDateTo.value) : null;
+        
+        // Filter photos based on criteria
+        filteredPhotos = currentPhotos.filter(photo => {
+            // Description filter
+            if (descriptionFilter) {
+                const description = photo.metadata && photo.metadata.q1 
+                    ? photo.metadata.q1.toLowerCase() 
+                    : '';
+                
+                if (!description.includes(descriptionFilter)) {
+                    return false;
+                }
+            }
+            
+            // Tag filter
+            if (selectedTags.length > 0) {
+                if (!photo.tags || !Array.isArray(photo.tags)) {
+                    return false;
+                }
+                
+                // Check if the photo has at least one of the selected tags
+                const hasMatchingTag = selectedTags.some(tag => photo.tags.includes(tag));
+                if (!hasMatchingTag) {
+                    return false;
+                }
+            }
+            
+            // Date filter
+            if (dateFrom || dateTo) {
+                // Try to extract date from metadata or filename
+                let photoDate = null;
+                
+                // Check if there's a date in metadata
+                if (photo.metadata && (photo.metadata.year || photo.metadata.month)) {
+                    const year = photo.metadata.year || '2000';
+                    const month = photo.metadata.month || '01';
+                    photoDate = new Date(`${year}-${month}-01`);
+                }
+                
+                // If no date found, use the photo's added date
+                if (!photoDate && photo.date_added) {
+                    photoDate = new Date(photo.date_added);
+                }
+                
+                // If we have a date to compare
+                if (photoDate) {
+                    // Check date range
+                    if (dateFrom && photoDate < dateFrom) {
+                        return false;
+                    }
+                    
+                    if (dateTo) {
+                        // Add a day to the date-to to make it inclusive
+                        const adjustedDateTo = new Date(dateTo);
+                        adjustedDateTo.setDate(adjustedDateTo.getDate() + 1);
+                        
+                        if (photoDate >= adjustedDateTo) {
+                            return false;
+                        }
+                    }
+                } else {
+                    // If we can't determine a date and the user is filtering by date,
+                    // exclude this photo from the results
+                    return false;
+                }
+            }
+            
+            // If the photo passed all filters, include it
+            return true;
+        });
+        
+        // Reset to first page when applying filters
+        clientPage = 1;
+        
+        // Render filtered photos with pagination
+        renderPhotosPage(clientPage);
+        renderPagination();
+    }
+    
+    // Add client-side pagination functions
+    function renderPhotosPage(page) {
+        // Calculate the start and end indexes for the photos to display
+        const start = (page - 1) * clientPageSize;
+        const end = Math.min(start + clientPageSize, filteredPhotos.length);
+        const photosToShow = filteredPhotos.slice(start, end);
+        
+        // Render the photos
+        renderPhotos(photosToShow);
+    }
+    
+    function renderPagination() {
+        // Find or create pagination container
+        let paginationContainer = document.getElementById('photo-pagination');
+        if (!paginationContainer) {
+            paginationContainer = document.createElement('div');
+            paginationContainer.id = 'photo-pagination';
+            paginationContainer.className = 'mt-3 d-flex justify-content-center';
+            photoGrid.parentNode.appendChild(paginationContainer);
+        } else {
+            paginationContainer.innerHTML = '';
+        }
+        
+        if (filteredPhotos.length === 0) {
+            paginationContainer.style.display = 'none';
+            return;
+        }
+        
+        // Calculate total client pages based on filtered photos
+        const filteredClientPages = Math.ceil(filteredPhotos.length / clientPageSize);
+        
+        // Create pagination nav
+        const nav = document.createElement('nav');
+        nav.setAttribute('aria-label', 'Photo navigation');
+        
+        const ul = document.createElement('ul');
+        ul.className = 'pagination';
+        
+        // Server pagination controls
+        if (totalServerPages > 1) {
+            // Previous server page button
+            const prevServerLi = document.createElement('li');
+            prevServerLi.className = `page-item ${serverPage === 1 ? 'disabled' : ''}`;
+            
+            const prevServerButton = document.createElement('button');
+            prevServerButton.className = 'page-link';
+            prevServerButton.type = 'button';
+            prevServerButton.innerHTML = '&laquo; Prev 100';
+            prevServerButton.addEventListener('click', () => {
+                if (serverPage > 1) {
+                    loadPhotosInFolder(currentFolderId, currentFolderPath, serverPage - 1);
+                }
+            });
+            
+            prevServerLi.appendChild(prevServerButton);
+            ul.appendChild(prevServerLi);
+        }
+        
+        // Previous client page button
+        const prevPageLi = document.createElement('li');
+        prevPageLi.className = `page-item ${clientPage === 1 ? 'disabled' : ''}`;
+        
+        const prevPageButton = document.createElement('button');
+        prevPageButton.className = 'page-link';
+        prevPageButton.type = 'button';
+        prevPageButton.innerHTML = '&lsaquo;';
+        prevPageButton.addEventListener('click', () => {
+            if (clientPage > 1) {
+                clientPage--;
+                renderPhotosPage(clientPage);
+                renderPagination();
+            }
+        });
+        
+        prevPageLi.appendChild(prevPageButton);
+        ul.appendChild(prevPageLi);
+        
+        // Page numbers
+        // Determine range of pages to show (up to 5)
+        let startPage = Math.max(1, clientPage - 2);
+        let endPage = Math.min(filteredClientPages, startPage + 4);
+        
+        // Adjust if we're near the end
+        if (endPage - startPage < 4 && startPage > 1) {
+            startPage = Math.max(1, endPage - 4);
+        }
+        
+        for (let i = startPage; i <= endPage; i++) {
+            const pageLi = document.createElement('li');
+            pageLi.className = `page-item ${i === clientPage ? 'active' : ''}`;
+            
+            const pageLink = document.createElement('button');
+            pageLink.className = 'page-link';
+            pageLink.type = 'button';
+            pageLink.textContent = i;
+            pageLink.addEventListener('click', () => {
+                clientPage = i;
+                renderPhotosPage(clientPage);
+                renderPagination();
+            });
+            
+            pageLi.appendChild(pageLink);
+            ul.appendChild(pageLi);
+        }
+        
+        // Next client page button
+        const nextPageLi = document.createElement('li');
+        nextPageLi.className = `page-item ${clientPage === filteredClientPages ? 'disabled' : ''}`;
+        
+        const nextPageButton = document.createElement('button');
+        nextPageButton.className = 'page-link';
+        nextPageButton.type = 'button';
+        nextPageButton.innerHTML = '&rsaquo;';
+        nextPageButton.addEventListener('click', () => {
+            if (clientPage < filteredClientPages) {
+                clientPage++;
+                renderPhotosPage(clientPage);
+                renderPagination();
+            }
+        });
+        
+        nextPageLi.appendChild(nextPageButton);
+        ul.appendChild(nextPageLi);
+        
+        // Server pagination controls
+        if (totalServerPages > 1) {
+            // Next server page button
+            const nextServerLi = document.createElement('li');
+            nextServerLi.className = `page-item ${serverPage === totalServerPages ? 'disabled' : ''}`;
+            
+            const nextServerButton = document.createElement('button');
+            nextServerButton.className = 'page-link';
+            nextServerButton.type = 'button';
+            nextServerButton.innerHTML = 'Next 100 &raquo;';
+            nextServerButton.addEventListener('click', () => {
+                if (serverPage < totalServerPages) {
+                    loadPhotosInFolder(currentFolderId, currentFolderPath, serverPage + 1);
+                }
+            });
+            
+            nextServerLi.appendChild(nextServerButton);
+            ul.appendChild(nextServerLi);
+        }
+        
+        // Add pagination info text
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'ms-3 d-flex align-items-center small text-muted';
+        
+        const startCount = (serverPage - 1) * serverPageSize + (clientPage - 1) * clientPageSize + 1;
+        const endCount = Math.min(
+            (serverPage - 1) * serverPageSize + clientPage * clientPageSize,
+            (serverPage - 1) * serverPageSize + filteredPhotos.length
+        );
+        
+        infoDiv.textContent = `Showing ${startCount}-${endCount} of ${totalPhotos} photos`;
+        
+        nav.appendChild(ul);
+        paginationContainer.appendChild(nav);
+        paginationContainer.appendChild(infoDiv);
+        paginationContainer.style.display = 'flex';
     }
 });

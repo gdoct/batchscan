@@ -119,3 +119,88 @@ body {
     align-items: center !important;
     text-align: center !important;
 }
+
+/* Styles for photo selection checkboxes */
+.photo-checkbox-container {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: none;
+    z-index: 2;
+    background-color: rgba(255, 255, 255, 0.8);
+    border-radius: 4px;
+    padding: 4px;
+}
+
+.photo-card:hover .photo-checkbox-container {
+    display: block;
+}
+
+.photo-checkbox {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.photo-card.selected {
+    box-shadow: 0 0 0 3px #0d6efd;
+}
+
+/* Style for photo card when selected */
+.photo-card.selected .photo-checkbox-container {
+    display: block;
+}
+
+/* Make checkbox always visible when photo is selected */
+.photo-card.selected .photo-checkbox-container {
+    display: block;
+}
+
+/* Highlight the card when selected */
+.photo-card.selected::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(13, 110, 253, 0.1);
+    z-index: 1;
+    pointer-events: none;
+}
+
+/* Pagination styles */
+#photo-pagination {
+    margin-top: 20px;
+    margin-bottom: 30px;
+}
+
+#photo-pagination .pagination {
+    margin-bottom: 0;
+}
+
+#photo-pagination .page-link {
+    color: #0d6efd;
+    cursor: pointer;
+}
+
+#photo-pagination .page-item.active .page-link {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+    color: white;
+}
+
+#photo-pagination .page-item.disabled .page-link {
+    color: #6c757d;
+    pointer-events: none;
+    background-color: #fff;
+    border-color: #dee2e6;
+}
+
+/* Make sure the pagination is visible */
+.pagination-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+}

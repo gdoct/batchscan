@@ -1,4 +1,4 @@
-# BatchScan
+# Batchscan
 
 A tool for batch processing and analyzing images using the Gemma-3 AI model.
 
@@ -23,7 +23,7 @@ A tool for batch processing and analyzing images using the Gemma-3 AI model.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/batchscan.git
+git clone https://github.com/gdoct/batchscan.git
 cd batchscan
 
 # Install in development mode
@@ -33,7 +33,7 @@ pip install -e .
 ### User Installation
 
 ```bash
-pip install git+https://github.com/yourusername/batchscan.git
+pip install git+https://github.com/gdoct/batchscan.git
 ```
 
 ## Usage

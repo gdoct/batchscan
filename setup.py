@@ -6,12 +6,12 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="batchscan",
     version="1.0.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Guido Docter",
+    author_email="no.email@example.com",
     description="A tool for batch scanning and analyzing images using AI",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/batchscan",
+    url="https://github.com/gdoct/batchscan",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",

@@ -104,6 +104,40 @@ class PhotoRepository(RepositoryBase):
             cursor.execute("SELECT * FROM photos WHERE folderid = ?", (folderid,))
             return cursor.fetchall()
     
+    def get_photos_count_by_folder(self, folderid):
+        """Get the count of photos in a specified folder.
+        
+        Args:
+            folderid (int): ID of the folder
+            
+        Returns:
+            int: Count of photos in the folder
+        """
+        with self.transaction() as cursor:
+            cursor.execute("SELECT COUNT(*) as count FROM photos WHERE folderid = ?", (folderid,))
+            result = cursor.fetchone()
+            return result['count'] if result else 0
+    
+    def get_photos_by_folder_paginated(self, folderid, offset, limit):
+        """Get paginated photos in a specified folder.
+        
+        Args:
+            folderid (int): ID of the folder
+            offset (int): Number of records to skip
+            limit (int): Maximum number of records to return
+            
+        Returns:
+            list: List of photo records
+        """
+        with self.transaction() as cursor:
+            cursor.execute("""
+                SELECT * FROM photos 
+                WHERE folderid = ? 
+                ORDER BY filename
+                LIMIT ? OFFSET ?
+            """, (folderid, limit, offset))
+            return cursor.fetchall()
+    
     def get_uncompleted_photos(self):
         """Get all photos that have not been processed."""
         with self.transaction() as cursor:

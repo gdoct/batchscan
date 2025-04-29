@@ -42,7 +42,56 @@
                     </div>
                 </div>
                 <div class="col-md-8">
-                    <h3>Photos</h3>
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Search Photos</h5>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#searchCollapse" aria-expanded="false" aria-controls="searchCollapse">
+                                <i class="bi bi-chevron-down"></i> Toggle Search
+                            </button>
+                        </div>
+                        <div class="collapse" id="searchCollapse">
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-12 mb-2">
+                                        <label for="search-description" class="form-label">Description:</label>
+                                        <input type="text" class="form-control" id="search-description" placeholder="Search by description...">
+                                    </div>
+                                    <div class="col-md-12 mb-2">
+                                        <label for="search-tags" class="form-label">Tags:</label>
+                                        <select class="form-select" id="search-tags" multiple>
+                                            <!-- Tags will be populated dynamically -->
+                                        </select>
+                                        <small class="text-muted">Ctrl+click to select multiple tags</small>
+                                    </div>
+                                    <div class="col-md-6 mb-2">
+                                        <label for="search-date-from" class="form-label">Date From:</label>
+                                        <input type="date" class="form-control" id="search-date-from">
+                                    </div>
+                                    <div class="col-md-6 mb-2">
+                                        <label for="search-date-to" class="form-label">Date To:</label>
+                                        <input type="date" class="form-control" id="search-date-to">
+                                    </div>
+                                </div>
+                                <div class="row mt-2">
+                                    <div class="col-md-12 d-flex justify-content-end">
+                                        <button class="btn btn-secondary me-2" id="search-reset">Reset</button>
+                                        <button class="btn btn-primary" id="search-apply">Apply Filters</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h3>Photos</h3>
+                        <div class="batch-actions" style="display: none;">
+                            <button class="btn btn-danger btn-sm me-2" id="batch-delete-db">
+                                <i class="bi bi-trash"></i> Delete from Database
+                            </button>
+                            <button class="btn btn-danger btn-sm" id="batch-delete-all">
+                                <i class="bi bi-trash-fill"></i> Delete from DB & Disk
+                            </button>
+                        </div>
+                    </div>
                     <div class="row" id="photo-grid">
                         <!-- Photos will be loaded here -->
                         <div class="col-12 text-center text-muted">

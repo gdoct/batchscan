@@ -245,8 +245,20 @@ def get_folders():
 
 @app.route('/api/folder/<int:folder_id>/photos')
 def get_photos_by_folder(folder_id):
-    """Get all photos in a folder"""
-    photos = photo_repo.get_photos_by_folder(folder_id)
+    """Get all photos in a folder with pagination support"""
+    # Get pagination parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = 100  # Server-side page size is 100 photos
+    
+    # Get total count of photos in this folder
+    photos_count = photo_repo.get_photos_count_by_folder(folder_id)
+    
+    # Calculate pagination values
+    total_pages = (photos_count + per_page - 1) // per_page
+    offset = (page - 1) * per_page
+    
+    # Get paginated photos
+    photos = photo_repo.get_photos_by_folder_paginated(folder_id, offset, per_page)
     result = []
     
     for photo in photos:
@@ -273,7 +285,15 @@ def get_photos_by_folder(folder_id):
         
         result.append(photo_data)
     
-    return jsonify(result)
+    return jsonify({
+        'photos': result,
+        'pagination': {
+            'page': page,
+            'per_page': per_page,
+            'total_photos': photos_count,
+            'total_pages': total_pages
+        }
+    })
 
 @app.route('/api/photo/<int:photo_id>')
 def get_photo_details(photo_id):
@@ -403,6 +423,62 @@ def serve_image(filename):
     except Exception as e:
         logger.error(f"Error serving image: {str(e)}")
         return f"Error serving image: {str(e)}", 500
+
+@app.route('/api/photos/delete', methods=['POST'])
+def delete_photos():
+    """Delete multiple photos from the database and optionally from disk"""
+    try:
+        data = request.json
+        photo_ids = data.get('photo_ids', [])
+        delete_from_disk = data.get('delete_from_disk', False)
+        
+        if not photo_ids:
+            return jsonify({'error': 'No photo IDs provided'}), 400
+        
+        deleted_count = 0
+        failed_count = 0
+        
+        for photo_id in photo_ids:
+            try:
+                # Get photo information before deleting
+                photo = photo_repo.get_photo_by_id(photo_id)
+                
+                if not photo:
+                    logger.warning(f"Photo ID {photo_id} not found in database")
+                    continue
+                
+                # Delete from disk if requested
+                if delete_from_disk and os.path.exists(photo['fullpath']):
+                    try:
+                        os.remove(photo['fullpath'])
+                        logger.info(f"Deleted photo from disk: {photo['fullpath']}")
+                    except Exception as e:
+                        logger.error(f"Error deleting photo file {photo['fullpath']}: {str(e)}")
+                        failed_count += 1
+                        continue
+                
+                # Delete related records from the database
+                preview_repo.delete_thumbnail(photo_id)
+                metadata_repo.delete_photo_metadata(photo_id)
+                tag_repo.delete_photo_tags(photo_id)
+                
+                # Delete the photo record
+                photo_repo.delete_photo(photo_id)
+                deleted_count += 1
+                
+            except Exception as e:
+                logger.error(f"Error processing photo ID {photo_id}: {str(e)}")
+                failed_count += 1
+        
+        return jsonify({
+            'deleted': deleted_count,
+            'failed': failed_count,
+            'total': len(photo_ids)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in delete_photos: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
